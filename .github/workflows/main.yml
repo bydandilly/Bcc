@@ -1,18 +1,19 @@
 name: Anonymous FTP Download and Commit
 
-# Configured to run manually from the Actions tab
+# This allows you to run this workflow manually from the Actions tab in GitHub
 on:
   workflow_dispatch:
 
 jobs:
   ftp_sync:
     runs-on: ubuntu-latest
+    
     steps:
       - name: Checkout repository
-        # This step is necessary to get the existing files and to push new commits
+        # This checks out your repository code so the action can modify and commit files
         uses: actions/checkout@v4
         with:
-          # Required for the 'git commit' step to work properly
+          # Fetch-depth is set to 0 to fetch all history, which is needed for the 'git commit' step
           fetch-depth: 0 
 
       - name: Install lftp
@@ -21,50 +22,55 @@ jobs:
 
       - name: Download from Anonymous FTP using lftp
         env:
-          # The FTP server IP
           FTP_SERVER_IP: 208.76.221.205
-          # The remote directory to download (use a plain string, no leading 'ftp://')
+          # The remote folder name, enclosed in quotes due to spaces and special characters
           FTP_REMOTE_PATH: "/Belmont Christian College (B+)"
-          # The local directory where files will be downloaded
+          # The local directory where files will be saved in your repository
           LOCAL_DIR: "ftp_download_data"
         run: |
+          echo "Connecting to $FTP_SERVER_IP..."
           # Create the local directory if it doesn't exist
           mkdir -p $LOCAL_DIR
 
-          # Use lftp's 'mirror' command to download the remote folder contents
-          # -c: Continue (resume) partial transfers
-          # -e: Delete files on the local side that no longer exist on the remote side (mirroring)
-          # --no-symlinks: Avoids issues with symbolic links
-          # --no-empty-dirs: Doesn't create remote directories if they are empty
-          # --anon-user/--anon-pass are used for anonymous FTP
-          lftp -c "open -e $FTP_SERVER_IP; 
-                  user anonymous anonymous@;
+          # The lftp command sequence:
+          # open $IP: connects (and attempts anonymous login)
+          # lcd $LOCAL_DIR: changes local directory
+          # mirror ...: syncs remote folder to local directory
+          #   -c: continue/resume transfers
+          #   -e: delete files locally that no longer exist remotely (mirroring)
+          #   --no-symlinks: ignores symbolic links
+          #   --no-empty-dirs: avoids creating empty directory structures
+          #   '$FTP_REMOTE_PATH' .: syncs the remote path to the current local directory (.)
+          lftp -c "open $FTP_SERVER_IP; 
                   lcd $LOCAL_DIR; 
-                  mirror -c -e --no-symlinks --no-empty-dirs $FTP_REMOTE_PATH . || exit 0"
-                  
+                  mirror -c -e --no-symlinks --no-empty-dirs '$FTP_REMOTE_PATH' . || exit 0"
+
       - name: Check for changes
         id: git_status
         run: |
-          # Check if the downloaded files resulted in any changes (add, modify, delete)
+          # Check if the download operation resulted in any file changes (add, modify, delete)
           if [[ $(git status --porcelain) ]]; then
             echo "changes_detected=true" >> $GITHUB_OUTPUT
+            echo "Changes detected. Preparing to commit."
           else
             echo "changes_detected=false" >> $GITHUB_OUTPUT
+            echo "No changes detected. Skipping commit."
           fi
           
       - name: Commit and Push if changes exist 🚀
+        # This step only runs if changes were detected in the previous step
         if: steps.git_status.outputs.changes_detected == 'true'
         run: |
+          # Configure Git user for the commit
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ftp_download_data
+          
+          # Add the download directory contents to the commit
+          git add $LOCAL_DIR
+          
+          # Commit the changes
           git commit -m "FTP Sync: Automated update of B+ files from anonymous FTP"
+          
+          # Push the changes to the repository
           git push
 
----
-
-## Setup Instructions
-
-1.  **Create the Workflow File:** In your GitHub repository, create a directory structure `.github/workflows/` and place the code above in a file named `ftp_sync.yml`.
-2.  **Initial Directory:** Consider creating the `ftp_download_data` folder in the root of your repository and committing an empty file (e.g., `.gitkeep`) to ensure Git tracks the location.
-3.  **Run the Action:** Navigate to the **Actions** tab in your repository. You will see the workflow named **"Anonymous FTP Download and Commit"**. Click on it, then click **"Run workflow"** to execute it manually for the first time. The downloaded files will then be committed to your repository.
