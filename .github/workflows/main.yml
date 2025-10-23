@@ -1,4 +1,4 @@
-name: Anonymous FTP Download and Commit
+name: Anonymous FTP Download and Commit (6GB Transfer)
 
 # This allows you to run this workflow manually from the Actions tab in GitHub
 on:
@@ -6,49 +6,47 @@ on:
 
 jobs:
   ftp_sync:
+    # Runs on the standard Ubuntu runner environment
     runs-on: ubuntu-latest
     
     steps:
       - name: Checkout repository
-        # This checks out your repository code so the action can modify and commit files
         uses: actions/checkout@v4
         with:
-          # Fetch-depth is set to 0 to fetch all history, which is needed for the 'git commit' step
+          # Required for the subsequent 'git commit' step to work properly
           fetch-depth: 0 
 
-      - name: Install lftp
-        # lftp is not pre-installed on GitHub runners, so we install it
+      - name: Install lftp Client
+        # lftp is not pre-installed, so this ensures it's available
         run: sudo apt-get update && sudo apt-get install -y lftp
 
-      - name: Download from Anonymous FTP using lftp
+      - name: Download from Anonymous FTP (Resilience & Logging) 🛠️
         env:
           FTP_SERVER_IP: 208.76.221.205
-          # The remote folder name, enclosed in quotes due to spaces and special characters
           FTP_REMOTE_PATH: "/Belmont Christian College (B+)"
-          # The local directory where files will be saved in your repository
           LOCAL_DIR: "ftp_download_data"
         run: |
-          echo "Connecting to $FTP_SERVER_IP..."
-          # Create the local directory if it doesn't exist
+          echo "Connecting to $FTP_SERVER_IP and beginning 6GB transfer to '$LOCAL_DIR'..."
           mkdir -p $LOCAL_DIR
 
-          # The lftp command sequence:
-          # open $IP: connects (and attempts anonymous login)
-          # lcd $LOCAL_DIR: changes local directory
-          # mirror ...: syncs remote folder to local directory
-          #   -c: continue/resume transfers
-          #   -e: delete files locally that no longer exist remotely (mirroring)
-          #   --no-symlinks: ignores symbolic links
-          #   --no-empty-dirs: avoids creating empty directory structures
-          #   '$FTP_REMOTE_PATH' .: syncs the remote path to the current local directory (.)
-          lftp -c "open $FTP_SERVER_IP; 
+          # --- lftp Configuration for Robust Cloud Transfer ---
+          # set log:level 3: Enables verbose output to act as a progress indicator (prints each file status).
+          # set net:timeout 90: Increases the network timeout to be patient with a slow connection.
+          # set net:max-retries 10: Increases connection/transfer retries on failure.
+          # set ftp:passive-mode true: Explicitly use Passive Mode for compatibility.
+          # set ftp:retry-always yes: Ensures it keeps trying on transfer failures.
+          # set cmd:long-running 10800: Sets a generous 3-hour (10800 seconds) timeout for the large 'mirror' command.
+          # --------------------------------------------------
+          
+          lftp -c "set log:level 3; set net:timeout 90; set net:max-retries 10; set ftp:passive-mode true; set ftp:retry-always yes; set cmd:long-running 10800;
+                  open $FTP_SERVER_IP; 
                   lcd $LOCAL_DIR; 
                   mirror -c -e --no-symlinks --no-empty-dirs '$FTP_REMOTE_PATH' . || exit 0"
 
-      - name: Check for changes
+      - name: Check for Changes
         id: git_status
         run: |
-          # Check if the download operation resulted in any file changes (add, modify, delete)
+          # Checks if the download resulted in any changes to the repository files
           if [[ $(git status --porcelain) ]]; then
             echo "changes_detected=true" >> $GITHUB_OUTPUT
             echo "Changes detected. Preparing to commit."
@@ -57,20 +55,18 @@ jobs:
             echo "No changes detected. Skipping commit."
           fi
           
-      - name: Commit and Push if changes exist 🚀
-        # This step only runs if changes were detected in the previous step
+      - name: Commit and Push Changes 🚀
         if: steps.git_status.outputs.changes_detected == 'true'
         run: |
-          # Configure Git user for the commit
+          # Configure Git user for the automated commit
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
-          # Add the download directory contents to the commit
+          # Add all contents of the download directory
           git add $LOCAL_DIR
           
           # Commit the changes
           git commit -m "FTP Sync: Automated update of B+ files from anonymous FTP"
           
-          # Push the changes to the repository
+          # Push the changes to the default branch
           git push
-
